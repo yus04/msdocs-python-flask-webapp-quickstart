@@ -92,10 +92,13 @@ def hello():
                 )
                 records = cur.fetchall()
             return render_template('hello.html', name=name, records=records)
-        except psycopg2.Error as e:
+        except Exception as e:
             app.logger.exception("DB error in /hello")
             if conn:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             return render_template(
                 'index.html',
                 db_error="DB にアクセスできません。({}: {})".format(type(e).__name__, e)
@@ -124,10 +127,13 @@ def delete(record_id):
             )
             records = cur.fetchall()
         return render_template('hello.html', name=name, records=records)
-    except psycopg2.Error as e:
+    except Exception as e:
         app.logger.exception("DB error in /delete")
         if conn:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return render_template(
             'index.html',
             db_error="DB にアクセスできません。({}: {})".format(type(e).__name__, e)
