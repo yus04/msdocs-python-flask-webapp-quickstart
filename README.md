@@ -13,17 +13,11 @@ If you need an Azure account, you can [create one for free](https://azure.micros
 
 ---
 
-## Azure Application Insights による OpenTelemetry 自動計装
+## デプロイ前の共通事前準備
 
-このフォークでは `app.py` に OpenTelemetry の自動計装コードを追加しています。テレメトリの送信先に Azure Application Insights を使用し、認証にはマネージド ID を使います。
+以下の手順は Application Insights・PostgreSQL の両方で共通して必要です。
 
-### 必要な作業手順
-
-以下の手順はすべて App Service へのデプロイ後に実施してください。
-
-#### 1. App Service のシステム割り当てマネージド ID を有効化する
-
-Azure Portal または Azure CLI で有効化します。
+### 1. App Service のシステム割り当てマネージド ID を有効化する
 
 ```bash
 az webapp identity assign \
@@ -31,11 +25,17 @@ az webapp identity assign \
   --resource-group <RESOURCE_GROUP>
 ```
 
-出力された `principalId` を次の手順で使用します。
+出力された `principalId` を以降の手順で使用します。
 
-#### 2. Application Insights リソースへのロールを付与する
+---
 
-マネージド ID（サービスプリンシパル）に **Monitoring Metrics Publisher** ロールを付与します。
+## Azure Application Insights による OpenTelemetry 自動計装
+
+`app.py` に OpenTelemetry の自動計装コードを追加しています。マネージド ID で認証し、テレメトリを Application Insights に送信します。接続文字列は「どのリソースに送るか」を指定するためのもので、マネージド ID 認証時は接続文字列内のキーは認証に使用されません。
+
+### 必要な作業手順
+
+#### 1. Monitoring Metrics Publisher ロールを付与する
 
 ```bash
 az role assignment create \
@@ -53,9 +53,13 @@ az monitor app-insights component show \
   --query id -o tsv
 ```
 
-#### 3. アプリ設定に接続文字列を追加する
+#### 2. アプリ設定に接続文字列を追加する
 
-App Service のアプリ設定に `APPLICATIONINSIGHTS_CONNECTION_STRING` を追加します。
+接続文字列は送信先リソースの識別に使用します（認証はマネージド ID で行います）。
+
+Azure Portal の場合: App Service → **構成** → **アプリケーション設定** → **新しいアプリケーション設定** から追加します。
+
+Azure CLI の場合:
 
 ```bash
 az webapp config appsettings set \
@@ -66,9 +70,7 @@ az webapp config appsettings set \
 
 接続文字列は Azure Portal の Application Insights リソース → **概要** → **接続文字列** から取得できます。
 
-#### 4. アプリを再起動する
-
-設定変更を反映するためにアプリを再起動します。
+#### 3. アプリを再起動する
 
 ```bash
 az webapp restart \
@@ -80,13 +82,11 @@ az webapp restart \
 
 `APPLICATIONINSIGHTS_CONNECTION_STRING` 環境変数が未設定の場合、計装コードはスキップされます。ローカルでは通常どおり Flask アプリとして起動できます。
 
-ローカルでも Application Insights に送信したい場合は、`.env` ファイルなどに接続文字列を設定してください（その場合は `ManagedIdentityCredential` の代わりに `DefaultAzureCredential` の使用を検討してください）。
-
 ---
 
 ## PostgreSQL による挨拶履歴の保存・削除
 
-このフォークでは名前を入力すると入力内容と日時を PostgreSQL に保存し、`/hello` 画面で一覧表示・個別削除できる機能を追加しています。
+マネージド ID のアクセストークンをパスワードとして使用するパスワードレス接続で PostgreSQL に接続します。`POSTGRES_PASSWORD` の設定は不要です。
 
 ### 機能概要
 
@@ -103,16 +103,29 @@ az webapp restart \
 |---|---|---|
 | `POSTGRES_HOST` | PostgreSQL サーバーのホスト名 | （必須） |
 | `POSTGRES_DB` | データベース名 | （必須） |
-| `POSTGRES_USER` | ユーザー名 | （必須） |
-| `POSTGRES_PASSWORD` | パスワード | （必須） |
+| `POSTGRES_USER` | PostgreSQL に Entra 管理者として登録した際の値 | （必須） |
 | `POSTGRES_PORT` | ポート番号 | `5432` |
 | `POSTGRES_SSLMODE` | SSL モード | `require` |
 
 `POSTGRES_HOST` が未設定の場合はテーブル初期化をスキップするため、DB なしでも起動できます（名前送信時はエラーになります）。
 
-### App Service へのデプロイ時の設定
+### PostgreSQL マネージド ID 接続の事前設定
 
-Azure Database for PostgreSQL (Flexible Server) などの接続情報をアプリ設定に追加します。
+#### 1. PostgreSQL Flexible Server で Microsoft Entra 認証を有効化する
+
+Azure Portal: PostgreSQL リソース → **認証** → **Microsoft Entra 認証のみ** または **PostgreSQL と Microsoft Entra の両方** を選択して保存します。
+
+#### 2. マネージド ID を PostgreSQL の Entra 管理者ユーザーとして追加する
+
+```bash
+az postgres flexible-server ad-admin create \
+  --server-name <POSTGRES_SERVER_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --display-name <APP_SERVICE_NAME> \
+  --object-id <PRINCIPAL_ID>
+```
+
+#### 3. App Service のアプリ設定に接続情報を追加する
 
 ```bash
 az webapp config appsettings set \
@@ -121,6 +134,5 @@ az webapp config appsettings set \
   --settings \
     POSTGRES_HOST="<SERVER>.postgres.database.azure.com" \
     POSTGRES_DB="<DATABASE_NAME>" \
-    POSTGRES_USER="<USERNAME>" \
-    POSTGRES_PASSWORD="<PASSWORD>"
+    POSTGRES_USER="<APP_SERVICE_NAME>"
 ```

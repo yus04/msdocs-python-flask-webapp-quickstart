@@ -17,15 +17,29 @@ if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 
 app = Flask(__name__)
 
+# PostgreSQL へのパスワードレス接続に使用するマネージド ID 資格情報
+_mi_credential = ManagedIdentityCredential()
+_POSTGRES_TOKEN_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
+
+# DB 設定に必要な環境変数がすべて揃っているか確認する
+_REQUIRED_DB_VARS = ("POSTGRES_HOST", "POSTGRES_DB", "POSTGRES_USER")
+_missing_db_vars = [v for v in _REQUIRED_DB_VARS if not os.environ.get(v)]
+_db_configured = len(_missing_db_vars) == 0
+
 
 def get_db_connection():
-    """環境変数から PostgreSQL 接続を返す。"""
+    """マネージド ID のアクセストークンを取得して PostgreSQL に接続する。"""
+    if not _db_configured:
+        raise RuntimeError(
+            "DB 接続に必要な環境変数が設定されていません: {}".format(", ".join(_missing_db_vars))
+        )
+    token = _mi_credential.get_token(_POSTGRES_TOKEN_SCOPE)
     return psycopg2.connect(
         host=os.environ["POSTGRES_HOST"],
         port=os.environ.get("POSTGRES_PORT", "5432"),
         dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
+        password=token.token,
         sslmode=os.environ.get("POSTGRES_SSLMODE", "require"),
     )
 
@@ -49,8 +63,8 @@ def init_db():
         conn.close()
 
 
-# DB 接続情報が揃っている場合のみ初期化を試みる
-if os.environ.get("POSTGRES_HOST"):
+# DB 設定が揃っている場合のみ初期化を試みる
+if _db_configured:
     try:
         init_db()
     except Exception as e:
