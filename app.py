@@ -1,7 +1,17 @@
 import os
 
+from azure.identity import ManagedIdentityCredential
+from azure.monitor.opentelemetry import configure_azure_monitor
 from flask import (Flask, redirect, render_template, request,
                    send_from_directory, url_for)
+
+# APPLICATIONINSIGHTS_CONNECTION_STRING 環境変数が設定されている場合に
+# Azure Application Insights への OpenTelemetry 自動計装を有効化する。
+# Azure リソース上での認証にはマネージド ID を使用する。
+if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    configure_azure_monitor(
+        credential=ManagedIdentityCredential(),
+    )
 
 app = Flask(__name__)
 
