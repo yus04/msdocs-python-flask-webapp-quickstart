@@ -51,7 +51,10 @@ def init_db():
 
 # DB 接続情報が揃っている場合のみ初期化を試みる
 if os.environ.get("POSTGRES_HOST"):
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        logging.warning("init_db failed: %s", e)
 
 
 @app.route('/')
@@ -72,8 +75,9 @@ def hello():
 
     if name:
         print('Request for hello page received with name=%s' % name)
-        conn = get_db_connection()
+        conn = None
         try:
+            conn = get_db_connection()
             # 名前と時刻を INSERT
             with conn.cursor() as cur:
                 cur.execute(
@@ -87,13 +91,18 @@ def hello():
                     "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
                 )
                 records = cur.fetchall()
-        except Exception:
-            conn.rollback()
+            return render_template('hello.html', name=name, records=records)
+        except psycopg2.Error as e:
             app.logger.exception("DB error in /hello")
-            raise
+            if conn:
+                conn.rollback()
+            return render_template(
+                'index.html',
+                db_error="DB にアクセスできません。({}: {})".format(type(e).__name__, e)
+            )
         finally:
-            conn.close()
-        return render_template('hello.html', name=name, records=records)
+            if conn:
+                conn.close()
     else:
         print('Request for hello page received with no name or blank name -- redirecting')
         return redirect(url_for('index'))
@@ -103,8 +112,9 @@ def hello():
 def delete(record_id):
     """指定した ID のレコードを削除して hello 画面を再表示する。"""
     name = request.form.get('name', '')
-    conn = get_db_connection()
+    conn = None
     try:
+        conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("DELETE FROM greetings WHERE id = %s", (record_id,))
         conn.commit()
@@ -113,13 +123,18 @@ def delete(record_id):
                 "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
             )
             records = cur.fetchall()
-    except Exception:
-        conn.rollback()
+        return render_template('hello.html', name=name, records=records)
+    except psycopg2.Error as e:
         app.logger.exception("DB error in /delete")
-        raise
+        if conn:
+            conn.rollback()
+        return render_template(
+            'index.html',
+            db_error="DB にアクセスできません。({}: {})".format(type(e).__name__, e)
+        )
     finally:
-        conn.close()
-    return render_template('hello.html', name=name, records=records)
+        if conn:
+            conn.close()
 
 
 if __name__ == '__main__':
