@@ -1,6 +1,6 @@
 # Deploy a Python (Flask) web app to Azure App Service - Sample Application
 
-> **注意:** このリポジトリは [Azure-Samples/msdocs-python-flask-webapp-quickstart](https://github.com/Azure-Samples/msdocs-python-flask-webapp-quickstart) をフォークしたプロジェクトです。オリジナルに加えて、Azure Application Insights による OpenTelemetry 自動計装（マネージド ID 認証）を追加しています。
+> **注意:** このリポジトリは [Azure-Samples/msdocs-python-flask-webapp-quickstart](https://github.com/Azure-Samples/msdocs-python-flask-webapp-quickstart) をフォークしたプロジェクトです。オリジナルに加えて、Azure Application Insights による OpenTelemetry 自動計装（マネージド ID 認証）と PostgreSQL を使った挨拶履歴の保存・削除機能を追加しています。
 
 This is the sample Flask application for the Azure Quickstart [Deploy a Python (Django or Flask) web app to Azure App Service](https://docs.microsoft.com/en-us/azure/app-service/quickstart-python). For instructions on how to create the Azure resources and deploy the application to Azure, refer to the Quickstart article.
 
@@ -81,3 +81,46 @@ az webapp restart \
 `APPLICATIONINSIGHTS_CONNECTION_STRING` 環境変数が未設定の場合、計装コードはスキップされます。ローカルでは通常どおり Flask アプリとして起動できます。
 
 ローカルでも Application Insights に送信したい場合は、`.env` ファイルなどに接続文字列を設定してください（その場合は `ManagedIdentityCredential` の代わりに `DefaultAzureCredential` の使用を検討してください）。
+
+---
+
+## PostgreSQL による挨拶履歴の保存・削除
+
+このフォークでは名前を入力すると入力内容と日時を PostgreSQL に保存し、`/hello` 画面で一覧表示・個別削除できる機能を追加しています。
+
+### 機能概要
+
+| 機能 | 説明 |
+|---|---|
+| 履歴保存 | 名前を送信すると `greetings` テーブルに名前と入力日時 (UTC) を INSERT |
+| 履歴一覧 | `/hello` 画面に DB から取得したデータであることが分かる形で全件表示 |
+| 個別削除 | 各行の削除ボタンで指定レコードを DELETE し画面を再描画 |
+| テーブル自動作成 | 起動時に `CREATE TABLE IF NOT EXISTS` でテーブルを自動作成 |
+
+### 必要な環境変数
+
+| 変数名 | 説明 | デフォルト |
+|---|---|---|
+| `POSTGRES_HOST` | PostgreSQL サーバーのホスト名 | （必須） |
+| `POSTGRES_DB` | データベース名 | （必須） |
+| `POSTGRES_USER` | ユーザー名 | （必須） |
+| `POSTGRES_PASSWORD` | パスワード | （必須） |
+| `POSTGRES_PORT` | ポート番号 | `5432` |
+| `POSTGRES_SSLMODE` | SSL モード | `require` |
+
+`POSTGRES_HOST` が未設定の場合はテーブル初期化をスキップするため、DB なしでも起動できます（名前送信時はエラーになります）。
+
+### App Service へのデプロイ時の設定
+
+Azure Database for PostgreSQL (Flexible Server) などの接続情報をアプリ設定に追加します。
+
+```bash
+az webapp config appsettings set \
+  --name <APP_SERVICE_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --settings \
+    POSTGRES_HOST="<SERVER>.postgres.database.azure.com" \
+    POSTGRES_DB="<DATABASE_NAME>" \
+    POSTGRES_USER="<USERNAME>" \
+    POSTGRES_PASSWORD="<PASSWORD>"
+```

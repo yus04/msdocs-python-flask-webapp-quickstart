@@ -1,5 +1,6 @@
 import os
 
+import psycopg2
 from azure.identity import ManagedIdentityCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
 from flask import (Flask, redirect, render_template, request,
@@ -16,27 +17,92 @@ if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 app = Flask(__name__)
 
 
+def get_db_connection():
+    """環境変数から PostgreSQL 接続を返す。"""
+    return psycopg2.connect(
+        host=os.environ["POSTGRES_HOST"],
+        port=os.environ.get("POSTGRES_PORT", "5432"),
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+        sslmode=os.environ.get("POSTGRES_SSLMODE", "require"),
+    )
+
+
+def init_db():
+    """起動時にテーブルが存在しなければ作成する。"""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS greetings (
+                    id        SERIAL PRIMARY KEY,
+                    name      TEXT        NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        conn.commit()
+
+
+# DB 接続情報が揃っている場合のみ初期化を試みる
+if os.environ.get("POSTGRES_HOST"):
+    init_db()
+
+
 @app.route('/')
 def index():
-   print('Request for index page received')
-   return render_template('index.html')
+    print('Request for index page received')
+    return render_template('index.html')
+
 
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
                                'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
+
 @app.route('/hello', methods=['POST'])
 def hello():
-   name = request.form.get('name')
+    name = request.form.get('name')
 
-   if name:
-       print('Request for hello page received with name=%s' % name)
-       return render_template('hello.html', name = name)
-   else:
-       print('Request for hello page received with no name or blank name -- redirecting')
-       return redirect(url_for('index'))
+    if name:
+        print('Request for hello page received with name=%s' % name)
+        # DB に名前と時刻を保存して全件取得
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO greetings (name) VALUES (%s)",
+                    (name,),
+                )
+                conn.commit()
+                cur.execute(
+                    "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
+                )
+                records = cur.fetchall()
+        return render_template('hello.html', name=name, records=records)
+    else:
+        print('Request for hello page received with no name or blank name -- redirecting')
+        return redirect(url_for('index'))
+
+
+@app.route('/delete/<int:record_id>', methods=['POST'])
+def delete(record_id):
+    """指定した ID のレコードを削除して /hello にリダイレクト。"""
+    name = request.form.get('name', '')
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM greetings WHERE id = %s", (record_id,))
+        conn.commit()
+    # 削除後は同じ hello 画面を再表示するため再クエリ
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
+            )
+            records = cur.fetchall()
+    return render_template('hello.html', name=name, records=records)
 
 
 if __name__ == '__main__':
-   app.run()
+    app.run()
