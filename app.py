@@ -1,3 +1,4 @@
+import logging
 import os
 
 import psycopg2
@@ -31,7 +32,8 @@ def get_db_connection():
 
 def init_db():
     """起動時にテーブルが存在しなければ作成する。"""
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -43,6 +45,8 @@ def init_db():
                 """
             )
         conn.commit()
+    finally:
+        conn.close()
 
 
 # DB 接続情報が揃っている場合のみ初期化を試みる
@@ -68,18 +72,27 @@ def hello():
 
     if name:
         print('Request for hello page received with name=%s' % name)
-        # DB に名前と時刻を保存して全件取得
-        with get_db_connection() as conn:
+        conn = get_db_connection()
+        try:
+            # 名前と時刻を INSERT
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO greetings (name) VALUES (%s)",
                     (name,),
                 )
-                conn.commit()
+            conn.commit()
+            # 全件 SELECT
+            with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
                 )
                 records = cur.fetchall()
+        except Exception:
+            conn.rollback()
+            app.logger.exception("DB error in /hello")
+            raise
+        finally:
+            conn.close()
         return render_template('hello.html', name=name, records=records)
     else:
         print('Request for hello page received with no name or blank name -- redirecting')
@@ -88,19 +101,24 @@ def hello():
 
 @app.route('/delete/<int:record_id>', methods=['POST'])
 def delete(record_id):
-    """指定した ID のレコードを削除して /hello にリダイレクト。"""
+    """指定した ID のレコードを削除して hello 画面を再表示する。"""
     name = request.form.get('name', '')
-    with get_db_connection() as conn:
+    conn = get_db_connection()
+    try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM greetings WHERE id = %s", (record_id,))
         conn.commit()
-    # 削除後は同じ hello 画面を再表示するため再クエリ
-    with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
             )
             records = cur.fetchall()
+    except Exception:
+        conn.rollback()
+        app.logger.exception("DB error in /delete")
+        raise
+    finally:
+        conn.close()
     return render_template('hello.html', name=name, records=records)
 
 
