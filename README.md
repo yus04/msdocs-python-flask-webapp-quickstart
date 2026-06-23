@@ -136,3 +136,73 @@ az webapp config appsettings set \
     POSTGRES_DB="<DATABASE_NAME>" \
     POSTGRES_USER="<APP_SERVICE_NAME>"
 ```
+
+---
+
+## Azure Blob Storage による PDF 表示
+
+マネージド ID を使って Azure Blob Storage のコンテナーから PDF ファイルの一覧を取得し、`/hello` 画面にインライン表示します。コンテナー内に PDF 以外のファイルが含まれている場合はエラーを返します。
+
+### 機能概要
+
+| 機能 | 説明 |
+|---|---|
+| PDF 一覧取得 | コンテナー内の全 Blob を列挙し、PDF ファイル名を取得 |
+| PDF インライン表示 | `/hello` 画面の挨拶履歴テーブルの下に PDF を埋め込み表示 |
+| 非 PDF 検出 | PDF 以外のファイルが含まれている場合は画面にエラーを表示 |
+| 未設定検出 | 必要な環境変数が未設定の場合は `RuntimeError` を返し画面にエラーを表示 |
+
+### 必要な環境変数
+
+| 変数名 | 説明 |
+|---|---|
+| `AZURE_STORAGE_ACCOUNT_NAME` | Blob Storage アカウント名 |
+| `AZURE_STORAGE_CONTAINER_NAME` | PDF が格納されているコンテナー名 |
+
+いずれかが未設定の場合は Storage セクションにエラーメッセージを表示します（DB セクションは引き続き動作します）。
+
+### Blob Storage マネージド ID 接続の事前設定
+
+#### 1. Storage Blob データ閲覧者ロールを付与する
+
+```bash
+STORAGE_RESOURCE_ID=$(az storage account show \
+  --name <STORAGE_ACCOUNT_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --query id -o tsv)
+
+az role assignment create \
+  --assignee <PRINCIPAL_ID> \
+  --role "Storage Blob Data Reader" \
+  --scope "$STORAGE_RESOURCE_ID"
+```
+
+コンテナー単位でスコープを絞る場合は `--scope` に以下を指定します。
+
+```
+/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.Storage/storageAccounts/<STORAGE_ACCOUNT_NAME>/blobServices/default/containers/<CONTAINER_NAME>
+```
+
+#### 2. App Service のアプリ設定に接続情報を追加する
+
+```bash
+az webapp config appsettings set \
+  --name <APP_SERVICE_NAME> \
+  --resource-group <RESOURCE_GROUP> \
+  --settings \
+    AZURE_STORAGE_ACCOUNT_NAME="<STORAGE_ACCOUNT_NAME>" \
+    AZURE_STORAGE_CONTAINER_NAME="<CONTAINER_NAME>"
+```
+
+#### 3. アプリを再起動する
+
+```bash
+az webapp restart \
+  --name <APP_SERVICE_NAME> \
+  --resource-group <RESOURCE_GROUP>
+```
+
+### ローカル開発時の注意
+
+`AZURE_STORAGE_ACCOUNT_NAME` または `AZURE_STORAGE_CONTAINER_NAME` が未設定の場合、Storage セクションはエラー表示になります。ローカルでテストする場合は `DefaultAzureCredential` による認証（`az login` 後）を使うか、環境変数を設定した上で Storage エミュレーター（Azurite）を利用してください。
+

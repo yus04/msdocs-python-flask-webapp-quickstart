@@ -2,4 +2,5 @@ Flask==3.1.0
 gunicorn
 azure-monitor-opentelemetry
 azure-identity
+azure-storage-blob
 psycopg2-binary

@@ -21,6 +21,7 @@
             <h2 class="fs-5 fw-bold mb-3 text-center">
                 <span class="badge bg-secondary">DB</span> 保存されている挨拶履歴
             </h2>
+
             <table class="table table-bordered table-striped table-hover">
                 <thead class="table-primary">
                     <tr>
@@ -44,6 +45,33 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+        {% endif %}
+
+        {% if storage_error %}
+        <div class="col-md-8 mx-auto px-4 pb-4">
+            <h2 class="fs-5 fw-bold mb-3 text-center">
+                <span class="badge bg-warning text-dark">Storage</span> 保存されている PDF
+            </h2>
+            <div class="alert alert-danger" role="alert">
+                Storage にアクセスできません。({{ storage_error }})
+            </div>
+        </div>
+        {% elif pdf_names %}
+        <div class="col-md-8 mx-auto px-4 pb-4">
+            <h2 class="fs-5 fw-bold mb-3 text-center">
+                <span class="badge bg-warning text-dark">Storage</span> 保存されている PDF
+            </h2>
+            {% for pdf_name in pdf_names %}
+            <div class="mb-4">
+                <p class="fw-semibold mb-1">{{ pdf_name }}</p>
+                <embed src="{{ url_for('serve_pdf', blob_name=pdf_name) }}"
+                       type="application/pdf"
+                       width="100%"
+                       height="600px"
+                       class="border rounded">
+            </div>
+            {% endfor %}
         </div>
         {% endif %}
      </main>      

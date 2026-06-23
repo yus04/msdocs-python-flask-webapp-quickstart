@@ -4,7 +4,8 @@ import os
 import psycopg2
 from azure.identity import ManagedIdentityCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
-from flask import (Flask, redirect, render_template, request,
+from azure.storage.blob import BlobServiceClient
+from flask import (Flask, make_response, redirect, render_template, request,
                    send_from_directory, url_for)
 
 # APPLICATIONINSIGHTS_CONNECTION_STRING 環境変数が設定されている場合に
@@ -26,6 +27,11 @@ _REQUIRED_DB_VARS = ("POSTGRES_HOST", "POSTGRES_DB", "POSTGRES_USER")
 _missing_db_vars = [v for v in _REQUIRED_DB_VARS if not os.environ.get(v)]
 _db_configured = len(_missing_db_vars) == 0
 
+# Storage 設定に必要な環境変数がすべて揃っているか確認する
+_REQUIRED_STORAGE_VARS = ("AZURE_STORAGE_ACCOUNT_NAME", "AZURE_STORAGE_CONTAINER_NAME")
+_missing_storage_vars = [v for v in _REQUIRED_STORAGE_VARS if not os.environ.get(v)]
+_storage_configured = len(_missing_storage_vars) == 0
+
 
 def get_db_connection():
     """マネージド ID のアクセストークンを取得して PostgreSQL に接続する。"""
@@ -42,6 +48,26 @@ def get_db_connection():
         password=token.token,
         sslmode=os.environ.get("POSTGRES_SSLMODE", "require"),
     )
+
+
+def get_blob_pdfs():
+    """マネージド ID を使って Blob Storage から PDF ファイル名の一覧を取得する。"""
+    if not _storage_configured:
+        raise RuntimeError(
+            "Storage 接続に必要な環境変数が設定されていません: {}".format(", ".join(_missing_storage_vars))
+        )
+    account_name = os.environ["AZURE_STORAGE_ACCOUNT_NAME"]
+    container_name = os.environ["AZURE_STORAGE_CONTAINER_NAME"]
+    account_url = "https://{}.blob.core.windows.net".format(account_name)
+    service_client = BlobServiceClient(account_url=account_url, credential=_mi_credential)
+    container_client = service_client.get_container_client(container_name)
+    blobs = list(container_client.list_blobs())
+    non_pdfs = [b.name for b in blobs if not b.name.lower().endswith(".pdf")]
+    if non_pdfs:
+        raise ValueError(
+            "PDF 以外のファイルが含まれています: {}".format(", ".join(non_pdfs))
+        )
+    return [b.name for b in blobs]
 
 
 def init_db():
@@ -77,6 +103,27 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/pdf/<path:blob_name>')
+def serve_pdf(blob_name):
+    """Blob Storage から PDF を取得してブラウザにインライン表示する。"""
+    if not blob_name.lower().endswith(".pdf"):
+        return "PDF ファイルのみアクセスできます", 400
+    if not _storage_configured:
+        return "Storage が設定されていません", 503
+    account_name = os.environ["AZURE_STORAGE_ACCOUNT_NAME"]
+    container_name = os.environ["AZURE_STORAGE_CONTAINER_NAME"]
+    account_url = "https://{}.blob.core.windows.net".format(account_name)
+    service_client = BlobServiceClient(account_url=account_url, credential=_mi_credential)
+    blob_client = service_client.get_blob_client(container=container_name, blob=blob_name)
+    data = blob_client.download_blob().readall()
+    response = make_response(data)
+    response.headers["Content-Type"] = "application/pdf"
+    response.headers["Content-Disposition"] = "inline; filename*=UTF-8''{}".format(
+        blob_name.rsplit("/", 1)[-1]
+    )
+    return response
+
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
@@ -105,7 +152,21 @@ def hello():
                     "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
                 )
                 records = cur.fetchall()
-            return render_template('hello.html', name=name, records=records)
+            # Blob Storage から PDF 一覧を取得する
+            pdf_names = []
+            storage_error = None
+            try:
+                pdf_names = get_blob_pdfs()
+            except Exception as se:
+                app.logger.exception("Storage error in /hello")
+                storage_error = "{}: {}".format(type(se).__name__, se)
+            return render_template(
+                'hello.html',
+                name=name,
+                records=records,
+                pdf_names=pdf_names,
+                storage_error=storage_error,
+            )
         except Exception as e:
             app.logger.exception("DB error in /hello")
             if conn:
@@ -140,7 +201,21 @@ def delete(record_id):
                 "SELECT id, name, created_at FROM greetings ORDER BY created_at DESC"
             )
             records = cur.fetchall()
-        return render_template('hello.html', name=name, records=records)
+        # Blob Storage から PDF 一覧を取得する
+        pdf_names = []
+        storage_error = None
+        try:
+            pdf_names = get_blob_pdfs()
+        except Exception as se:
+            app.logger.exception("Storage error in /delete")
+            storage_error = "{}: {}".format(type(se).__name__, se)
+        return render_template(
+            'hello.html',
+            name=name,
+            records=records,
+            pdf_names=pdf_names,
+            storage_error=storage_error,
+        )
     except Exception as e:
         app.logger.exception("DB error in /delete")
         if conn:
